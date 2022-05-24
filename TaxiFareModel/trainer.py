@@ -8,6 +8,10 @@ from sklearn.model_selection import train_test_split
 from TaxiFareModel.encoders import DistanceTransformer, TimeFeaturesEncoder
 import pandas as pd
 from TaxiFareModel.utils import haversine_vectorized, compute_rmse
+from memoized_property import memoized_property
+import mlflow
+from mlflow.tracking import MlflowClient
+from TaxiFareModel.data import get_data
 
 class Trainer():
     def __init__(self, X, y):
@@ -18,6 +22,29 @@ class Trainer():
         self.pipeline = None
         self.X = X
         self.y = y
+        self.experiment_name = '[SPAIN] Valeria'
+
+    @memoized_property
+    def mlflow_client(self):
+        mlflow.set_tracking_uri("https://mlflow.lewagon.ai/")
+        return MlflowClient()
+
+    @memoized_property
+    def mlflow_experiment_id(self):
+        try:
+            return self.mlflow_client.create_experiment(self.experiment_name)
+        except BaseException:
+            return self.mlflow_client.get_experiment_by_name(self.experiment_name).experiment_id
+
+    @memoized_property
+    def mlflow_run(self):
+        return self.mlflow_client.create_run(self.mlflow_experiment_id)
+
+    def mlflow_log_param(self, key, value):
+        self.mlflow_client.log_param(self.mlflow_run.info.run_id, key, value)
+
+    def mlflow_log_metric(self, key, value):
+        self.mlflow_client.log_metric(self.mlflow_run.info.run_id, key, value)
 
     def set_pipeline(self):
         """defines the pipeline as a class attribute"""
@@ -39,11 +66,11 @@ class Trainer():
         ])
         return self.pipeline
 
-    def run(self):
+    def run(self, X_train, y_train):
         """set and train the pipeline"""
         self.pipeline = self.set_pipeline()
-        self.pipeline.fit(self.X, self.y)
-        return self.pipeline
+        self.pipeline.fit(X_train, y_train)
+
 
     def evaluate(self, X_test, y_test):
         """evaluates the pipeline on df_test and return the RMSE"""
@@ -54,10 +81,16 @@ class Trainer():
 
 
 if __name__ == "__main__":
-    # get data
-    # clean data
-    # set X and y
-    # hold out
-    # train
-    # evaluate
-    print('TODO')
+
+    df = get_data()
+    X = df[df.columns.drop(['key', 'fare_amount'])]
+    y = df['fare_amount']
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
+    trainer = Trainer(X, y)
+    trainer.run(X_train, y_train)
+    evaluation = trainer.evaluate(X_test, y_test)
+    print(evaluation)
+
+    trainer.mlflow_log_metric('rmse',evaluation)
+    trainer.mlflow_log_param('model', 'linear regression')
